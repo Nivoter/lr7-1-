@@ -1,0 +1,175 @@
+/*
+ * lr8.c
+ *
+ * Created: 06.10.2018 15:33:04
+ * Author: Student
+ */
+
+#include <io.h>
+#include <delay.h>
+
+
+#define CREAD 2
+#define RS0 3
+#define RS1 4
+#define RW 6
+// Mode Register
+#define FS0 0
+#define FS1 1
+#define FS2 2
+#define FS3 3
+#define MD2 7
+// Configuration Register
+#define BUF 4
+// 2nd part
+#define G1 1
+#define G2 2
+#define UB 4
+// Registers
+#define _BV(b) (1 << (b))
+#define MODE_REG _BV(RS0)
+#define CONFIG_REG _BV(RS1)
+
+#define BIT_IS_SET(Reg, b) ((Reg & _BV(b)) != 0)
+
+const unsigned char segments[] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D,0x7D, 0x07, 0x7F, 0x6F};
+void Digit(int d)
+{
+//[]-----------------------------------------------------[]
+//| Ќазначение: выделение цифр из разр€дов п€тиразр€дного |
+//| дес€тичного положительного числа |
+//| ¬ходные параметры: |
+//| d - целое дес€тичное положительное число |
+//| m - номер разр€да (от 1 до 5, слева направо) |
+//| ‘ункци€ возвращает значение цифры в разр€де m числа d |
+//[]-----------------------------------------------------[]
+    char i = 5, a, flag;
+
+    while(i>0)
+    { // цикл по разр€дам числа
+        a=d%10;
+        PORTA |= (1<<i);
+        PORTC = segments[a];
+        delay_us(1);
+        PORTA &=~(1<<i);
+        d/=10;
+        i--;
+        if(d==0)
+        {   
+
+            while(i>0)
+            {
+                PORTA |= (1<<i);
+                PORTC = 0;
+                delay_us(1);
+                PORTA &=~(1<<i);
+                i--;
+            }
+        }   
+    }
+}
+
+void SPI_Write(char cmd)
+{
+	signed char i=7;	
+	while(i>=0)				//÷икл по изменению вниз, так как так проще начать передачу со старшего разр€да
+	{
+		if(((1<<i)&cmd) != 0)		//≈сли в cmd соответствующий разр€д равен 1, то подаем высокий сигнал
+		{	
+			PORTG |= (1<<3);
+		}
+		else
+		{
+			PORTG &= ~(1<<3);			
+		}
+		delay_us(20);
+		PORTG |=(1<<0);
+		delay_us(20);
+		PORTG &=~(1<<0);
+		i--;
+	}	
+}
+
+void setAd7798(void)
+{
+    SPI_Write(CONFIG_REG);
+    delay_us(90);
+    SPI_Write(_BV(G1) | _BV(G2) | _BV(UB));
+    SPI_Write(_BV(BUF));
+    delay_us(90);
+    SPI_Write(MODE_REG);
+    delay_us(90);
+    SPI_Write(_BV(MD2));
+    SPI_Write(_BV(FS0) | _BV(FS1) | _BV(FS2) | _BV(FS3));
+    delay_us(90);
+    SPI_Write(MODE_REG);
+    delay_us(90);
+    SPI_Write(0x00);
+    SPI_Write(_BV(FS0) | _BV(FS1) | _BV(FS2) | _BV(FS3));
+    delay_us(90);
+    SPI_Write(_BV(RW) | _BV(RS1) | _BV(RS0) | _BV(CREAD));
+}
+
+char SPI_Read(void)
+{
+	signed char i=7;
+	char result=0;
+    PORTG &=~(1<<0);
+	while(i>=0)			        //÷икл по изменению вниз, так как так проще начать запись со старшего разр€да
+	{
+		delay_us(20);
+		PORTG |=(1<<0);	    	//ѕоднимаем SCLK
+		if(((1<<1) & PING)!=0)	//ѕровер€ем, что пришло с MISO, если высокий сигнал, то записываем 1 в соответствующий разр€д
+		{
+			result |= (1<<i);
+		}
+		delay_us(20);
+		PORTG &=~(1<<0);    	//ќпускаем SCLK
+		i--;
+	}
+    return result;
+}
+
+
+void resetAD7798(void)
+{
+    unsigned char i;
+    for(i = 0; i < 4; ++i)
+    {
+        SPI_Write(0xFF);
+    }
+}
+
+void initialization(void)
+{
+	DDRG |=(1<<0)|(1<<3);
+    DDRG &=~(1<<1);
+    DDRA = 0xFF;
+    DDRC = 0xFF;
+}
+
+unsigned long readAD7798(void)
+{
+    unsigned char byte1, byte2, byte3;
+    unsigned long result;
+    while((PING & (1<<1))!=0);
+    byte1 = SPI_Read();
+    byte2 = SPI_Read();
+    byte3 = SPI_Read();
+    result = ((unsigned long)byte1 << 15) + ((unsigned long)byte2 << 7) + (unsigned long)byte3;
+    return result;
+}
+
+void main(void)
+{
+    long result =0;
+    initialization();
+    resetAD7798();
+    setAd7798();    
+    while (1)
+    {   
+            result = (readAD7798() >> 8) / 2;
+            Digit(result);
+            //delay_ms(100);                 
+    }
+}
